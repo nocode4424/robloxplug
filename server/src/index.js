@@ -9,12 +9,9 @@ const PORT = process.env.PORT || 3001;
 const WS_PORT = process.env.WS_PORT || 8080;
 
 // --- State ---
-// sessionToken -> { ws, connectedAt }
-const studioClients = new Map();
-// sessionToken -> { createdAt }
-const sessions = new Map();
-// sessionToken -> ScriptPayload[] (queue for HTTP polling fallback)
-const scriptQueues = new Map();
+const sessions = new Map();       // token -> { createdAt }
+const scriptQueues = new Map();   // token -> ScriptPayload[]
+const studioClients = new Map();  // token -> { ws?, httpPolling?, connectedAt }
 
 // --- Claude Client ---
 const anthropic = new Anthropic();
@@ -36,7 +33,6 @@ async function parseClaudeResponse(text) {
     .replace(/```\s*$/m, '')
     .trim();
 
-  // Find the outermost JSON object
   const start = cleaned.indexOf('{');
   const end = cleaned.lastIndexOf('}');
 
@@ -49,7 +45,6 @@ async function parseClaudeResponse(text) {
     }
   }
 
-  // True fallback only if no JSON found
   return {
     scriptName: "GeneratedScript",
     scriptType: "Script",
@@ -64,25 +59,49 @@ const app = express();
 app.use(cors({ origin: true }));
 app.use(express.json());
 
-// Create a new session
+// Create a new session (called by web app)
 app.post('/api/session', (req, res) => {
   const token = uuidv4();
   sessions.set(token, { createdAt: Date.now() });
+  scriptQueues.set(token, []);
+  console.log('Session created:', token);
   res.json({ sessionToken: token });
 });
 
-// Check if studio is connected for a given session
+// Register Studio plugin for a session (called by plugin on Connect)
+app.post('/api/session/:token/register', (req, res) => {
+  const { token } = req.params;
+  console.log('Studio plugin registered for token:', token);
+
+  if (!sessions.has(token)) {
+    sessions.set(token, { createdAt: Date.now() });
+  }
+  if (!scriptQueues.has(token)) {
+    scriptQueues.set(token, []);
+  }
+
+  studioClients.set(token, { httpPolling: true, connectedAt: Date.now() });
+  console.log('All registered tokens:', [...studioClients.keys()]);
+  res.json({ success: true });
+});
+
+// Check if Studio plugin is connected (polled by web app)
 app.get('/api/session/:token/status', (req, res) => {
   const { token } = req.params;
-  if (!sessions.has(token)) {
-    return res.status(404).json({ error: 'Session not found' });
-  }
-  const client = studioClients.get(token);
-  const connected = !!(client && (client.ws.readyState === 1 || client.httpPolling));
+  const connected = studioClients.has(token);
   res.json({ connected });
 });
 
-// Generate a script via Claude and push to Studio
+// Poll for pending scripts (called by Studio plugin every 2s)
+app.get('/api/session/:token/scripts', (req, res) => {
+  const { token } = req.params;
+  const queue = scriptQueues.get(token) || [];
+  scriptQueues.set(token, []); // drain after sending
+  console.log('Plugin polled token:', token, '— sending', queue.length, 'scripts');
+  res.json(queue);
+});
+
+// Generate a script via Claude (called by web app chat)
 app.post('/api/generate', async (req, res) => {
   const { prompt, sessionToken, gameContext } = req.body;
 
@@ -90,8 +109,10 @@ app.post('/api/generate', async (req, res) => {
     return res.status(400).json({ error: 'prompt and sessionToken are required' });
   }
 
+  // Auto-create session if it doesn't exist (in case server restarted)
   if (!sessions.has(sessionToken)) {
-    return res.status(404).json({ error: 'Session not found' });
+    sessions.set(sessionToken, { createdAt: Date.now() });
+    scriptQueues.set(sessionToken, []);
   }
 
   try {
@@ -111,7 +132,7 @@ app.post('/api/generate', async (req, res) => {
 
     const payload = await parseClaudeResponse(rawText);
 
-    // If source itself is a JSON string (double-wrapped), parse it again
+    // Unwrap double-wrapped JSON source
     let finalSource = payload.source;
     try {
       const innerParsed = JSON.parse(payload.source);
@@ -123,21 +144,21 @@ app.post('/api/generate', async (req, res) => {
         payload.parentPath = innerParsed.parentPath || payload.parentPath;
       }
     } catch (e) {
-      // source is already raw Luau, keep as-is
+      // source is already raw Luau
     }
     payload.source = finalSource;
 
-    // Validate all required fields exist
+    // Validate required fields
     const required = ['scriptName', 'scriptType', 'parentPath', 'source', 'description'];
     const missing = required.filter((field) => !payload[field]);
     if (missing.length > 0) {
       return res.status(500).json({
-        error: `Claude response missing required fields: ${missing.join(', ')}`,
+        error: `Missing required fields: ${missing.join(', ')}`,
         payload,
       });
     }
 
-    // Build a clean script object with only the fields we need
+    // Build clean script payload
     const scriptData = {
       scriptName: payload.scriptName,
       scriptType: payload.scriptType,
@@ -146,68 +167,30 @@ app.post('/api/generate', async (req, res) => {
       description: payload.description,
     };
 
-    console.log("SENDING TO STUDIO:", JSON.stringify({
-      scriptName: scriptData.scriptName,
-      scriptType: scriptData.scriptType,
-      parentPath: scriptData.parentPath,
-      sourceLength: scriptData.source.length,
-    }));
+    // Queue for HTTP polling (Studio plugin picks this up)
+    const queue = scriptQueues.get(sessionToken) || [];
+    queue.push(scriptData);
+    scriptQueues.set(sessionToken, queue);
+    console.log('Queued script for token:', sessionToken, '— queue size:', queue.length);
+    console.log('Script:', scriptData.scriptName, scriptData.scriptType, scriptData.parentPath);
 
-    // Push to Studio via WebSocket if connected
-    console.log("studioClients size:", studioClients.size);
-    console.log("Looking for token:", sessionToken);
-    console.log("Found client:", !!studioClients.get(sessionToken));
+    // Also push via WebSocket if a WS client is connected
     const client = studioClients.get(sessionToken);
     let pushedToStudio = false;
-    if (client && client.ws.readyState === 1) {
+    if (client && client.ws && client.ws.readyState === 1) {
       client.ws.send(JSON.stringify(scriptData));
       pushedToStudio = true;
-      console.log("Pushed via WebSocket");
-    } else if (client && client.httpPolling) {
-      console.log("Client is HTTP-polling, script queued");
-    } else {
-      console.log("No connected client found for this token");
+      console.log("Also pushed via WebSocket");
     }
 
-    // Also queue for HTTP polling (Studio plugin fallback)
-    if (!scriptQueues.has(sessionToken)) {
-      scriptQueues.set(sessionToken, []);
-    }
-    scriptQueues.get(sessionToken).push(scriptData);
-
-    res.json({ ...payload, pushedToStudio });
+    res.json({ ...scriptData, pushedToStudio: pushedToStudio || studioClients.has(sessionToken) });
   } catch (err) {
     console.error('Generate error:', err);
     res.status(500).json({ error: err.message });
   }
 });
 
-// Poll for pending scripts (HTTP fallback for Studio plugin)
-app.get('/api/session/:token/scripts', (req, res) => {
-  const { token } = req.params;
-  if (!sessions.has(token)) {
-    return res.status(404).json({ error: 'Session not found' });
-  }
-  const queue = scriptQueues.get(token) || [];
-  // Drain the queue
-  scriptQueues.set(token, []);
-  res.json(queue);
-});
-
-// Register a Studio plugin connection via HTTP (marks session as connected)
-app.post('/api/session/:token/register', (req, res) => {
-  const { token } = req.params;
-  console.log("Plugin registered via HTTP with token:", token);
-  if (!sessions.has(token)) {
-    sessions.set(token, { createdAt: Date.now() });
-  }
-  // Mark as HTTP-polling client
-  studioClients.set(token, { ws: { readyState: 0 }, connectedAt: Date.now(), httpPolling: true });
-  console.log("All registered tokens:", [...studioClients.keys()]);
-  res.json({ registered: true });
-});
-
-// --- WebSocket Server ---
+// --- WebSocket Server (optional, for non-polling clients) ---
 const wss = new WebSocketServer({ port: WS_PORT });
 
 wss.on('connection', (ws) => {
@@ -217,18 +200,16 @@ wss.on('connection', (ws) => {
   ws.on('message', (data) => {
     try {
       const msg = JSON.parse(data);
-
       if (msg.type === 'register' && msg.sessionToken) {
         registeredToken = msg.sessionToken;
-
-        // Ensure session exists
         if (!sessions.has(registeredToken)) {
           sessions.set(registeredToken, { createdAt: Date.now() });
         }
-
+        if (!scriptQueues.has(registeredToken)) {
+          scriptQueues.set(registeredToken, []);
+        }
         studioClients.set(registeredToken, { ws, connectedAt: Date.now() });
-        console.log(`Studio registered for session: ${registeredToken}`);
-
+        console.log('Studio registered via WebSocket:', registeredToken);
         ws.send(JSON.stringify({ type: 'registered', sessionToken: registeredToken }));
       }
     } catch (err) {
@@ -239,7 +220,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     if (registeredToken) {
       studioClients.delete(registeredToken);
-      console.log(`Studio disconnected for session: ${registeredToken}`);
+      console.log('Studio WS disconnected:', registeredToken);
     }
   });
 });
