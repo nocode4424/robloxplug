@@ -12,12 +12,18 @@ export default function Home() {
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
 
+  const [error, setError] = useState<string | null>(null);
+
   async function handleConnect() {
     setLoading(true);
+    setError(null);
     try {
       const sessionToken = await createSession();
       setToken(sessionToken);
       localStorage.setItem("sessionToken", sessionToken);
+    } catch (err) {
+      console.error("Failed to create session:", err);
+      setError(err instanceof Error ? err.message : "Failed to connect to server");
     } finally {
       setLoading(false);
     }
@@ -48,6 +54,9 @@ export default function Home() {
           </p>
         </CardHeader>
         <CardContent className="space-y-4">
+          {error && (
+            <p className="text-sm text-red-500 text-center">{error}</p>
+          )}
           {!token ? (
             <Button
               onClick={handleConnect}

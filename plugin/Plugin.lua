@@ -77,8 +77,8 @@ local urlInput = Instance.new("TextBox")
 urlInput.Size = UDim2.new(1, 0, 0, 30)
 urlInput.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
 urlInput.BorderSizePixel = 0
-urlInput.Text = "ws://localhost:8080"
-urlInput.PlaceholderText = "ws://localhost:8080"
+urlInput.Text = "http://localhost:3001"
+urlInput.PlaceholderText = "http://localhost:3001"
 urlInput.TextColor3 = Color3.fromRGB(255, 255, 255)
 urlInput.PlaceholderColor3 = Color3.fromRGB(120, 120, 120)
 urlInput.TextSize = 13
@@ -312,11 +312,11 @@ local function connect()
 		return
 	end
 
-	-- Convert ws:// URL to http:// for polling
-	local httpUrl = serverUrl:gsub("^ws://", "http://"):gsub("^wss://", "https://")
+	-- Ensure URL is HTTP (strip trailing slash)
+	local httpUrl = serverUrl:gsub("/$", "")
 
 	-- Register the session via HTTP
-	addLog("Connecting to " .. serverUrl .. "...")
+	addLog("Connecting to " .. httpUrl .. "...")
 	statusLabel.Text = "Status: Connecting..."
 	statusLabel.TextColor3 = Color3.fromRGB(255, 200, 80)
 
