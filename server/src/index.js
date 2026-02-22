@@ -19,7 +19,7 @@ const scriptQueues = new Map();
 // --- Claude Client ---
 const anthropic = new Anthropic();
 
-const SYSTEM_PROMPT = `You are an expert Roblox Luau developer. When given a request, generate a single Roblox script that implements the feature. Always respond with valid JSON only — no markdown, no explanation outside the JSON. Format: { "scriptName": string, "scriptType": "Script" | "LocalScript" | "ModuleScript", "parentPath": string (e.g. "ServerScriptService", "ReplicatedStorage", "StarterPlayerScripts"), "source": string (the full Luau code), "description": string (one sentence summary) }. Follow Roblox best practices: use RemoteEvents for client-server communication, never use wait() (use task.wait()), use typed Luau where practical.`;
+const SYSTEM_PROMPT = `You are an expert Roblox Luau developer. When given a request, generate a single Roblox script that implements the feature. Always respond with valid JSON only — no markdown, no explanation outside the JSON. Format: { "scriptName": string, "scriptType": "Script" | "LocalScript" | "ModuleScript", "parentPath": string (e.g. "ServerScriptService", "ReplicatedStorage", "StarterPlayerScripts"), "source": string (the full Luau code), "description": string (one sentence summary) }. Follow Roblox best practices: use RemoteEvents for client-server communication, never use wait() (use task.wait()), use typed Luau where practical. IMPORTANT: Your entire response must be valid JSON only. Do not include any text before or after the JSON object. Do not use markdown code blocks. Start your response with { and end with }.`;
 
 // --- Express App ---
 const app = express();
@@ -68,21 +68,31 @@ app.post('/api/generate', async (req, res) => {
       messages: [{ role: 'user', content: userMessage }],
     });
 
-    const text = response.content[0].text;
+    const raw = response.content[0].text;
+
+    // Strip markdown code blocks if Claude wrapped the response
+    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
 
     let payload;
     try {
-      payload = JSON.parse(text);
-    } catch {
-      return res.status(500).json({ error: 'Failed to parse Claude response as JSON', raw: text });
+      payload = JSON.parse(cleaned);
+    } catch (parseErr) {
+      console.error('JSON parse failed. Raw response:', raw);
+      return res.status(500).json({
+        error: 'Failed to parse Claude response as JSON',
+        parseError: parseErr.message,
+        raw,
+      });
     }
 
-    // Validate required fields
+    // Validate all required fields exist
     const required = ['scriptName', 'scriptType', 'parentPath', 'source', 'description'];
-    for (const field of required) {
-      if (!payload[field]) {
-        return res.status(500).json({ error: `Missing field in response: ${field}`, payload });
-      }
+    const missing = required.filter((field) => !payload[field]);
+    if (missing.length > 0) {
+      return res.status(500).json({
+        error: `Claude response missing required fields: ${missing.join(', ')}`,
+        payload,
+      });
     }
 
     // Push to Studio via WebSocket if connected
