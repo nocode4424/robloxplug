@@ -36,6 +36,19 @@ const BADGE_LETTERS: Record<string, string> = {
   ModuleScript: "M",
 };
 
+// Strip JSON wrapper if source accidentally contains it
+function cleanSource(source: string): string {
+  if (source.trim().startsWith('{')) {
+    try {
+      const inner = JSON.parse(source);
+      if (inner.source) return inner.source;
+    } catch {
+      // not JSON, use as-is
+    }
+  }
+  return source;
+}
+
 function loadStorage<T>(key: string, fallback: T): T {
   if (typeof window === "undefined") return fallback;
   try {
@@ -175,7 +188,7 @@ export default function ChatPage() {
   }
 
   function handleDownload(script: ScriptPayload) {
-    const blob = new Blob([script.source], { type: "text/plain" });
+    const blob = new Blob([cleanSource(script.source)], { type: "text/plain" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -696,7 +709,7 @@ export default function ChatPage() {
                                   }}
                                   lineNumberStyle={{ color: "var(--text-muted)", fontSize: 10 }}
                                 >
-                                  {msg.script.source}
+                                  {cleanSource(msg.script.source)}
                                 </SyntaxHighlighter>
                               </motion.div>
                             </AnimatePresence>
@@ -955,7 +968,7 @@ export default function ChatPage() {
               </div>
               <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
                 <button
-                  onClick={() => handleCopyCode(selectedScript.source)}
+                  onClick={() => handleCopyCode(cleanSource(selectedScript.source))}
                   style={{
                     background: "var(--bg-card)",
                     border: "1px solid var(--border)",
@@ -1014,7 +1027,7 @@ export default function ChatPage() {
                 }}
                 lineNumberStyle={{ color: "var(--text-muted)", fontSize: 10 }}
               >
-                {selectedScript.source}
+                {cleanSource(selectedScript.source)}
               </SyntaxHighlighter>
             </div>
 
@@ -1042,7 +1055,7 @@ export default function ChatPage() {
 
               {/* Services */}
               <div style={{ display: "flex", flexWrap: "wrap", gap: 4, marginBottom: 8 }}>
-                {detectServices(selectedScript.source).map((s) => (
+                {detectServices(cleanSource(selectedScript.source)).map((s) => (
                   <span
                     key={s}
                     style={{
@@ -1060,7 +1073,7 @@ export default function ChatPage() {
               </div>
 
               {/* Warnings */}
-              {detectWarnings(selectedScript.source).map((w, i) => (
+              {detectWarnings(cleanSource(selectedScript.source)).map((w, i) => (
                 <div
                   key={i}
                   style={{
@@ -1075,7 +1088,7 @@ export default function ChatPage() {
                 </div>
               ))}
 
-              {detectWarnings(selectedScript.source).length === 0 && (
+              {detectWarnings(cleanSource(selectedScript.source)).length === 0 && (
                 <div style={{ fontSize: 11, color: "var(--accent-green)", display: "flex", gap: 4 }}>
                   <span>✓</span> No issues detected
                 </div>

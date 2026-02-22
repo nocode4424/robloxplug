@@ -111,6 +111,22 @@ app.post('/api/generate', async (req, res) => {
 
     const payload = await parseClaudeResponse(rawText);
 
+    // If source itself is a JSON string (double-wrapped), parse it again
+    let finalSource = payload.source;
+    try {
+      const innerParsed = JSON.parse(payload.source);
+      if (innerParsed.source) {
+        console.log("UNWRAPPING double-wrapped JSON source");
+        finalSource = innerParsed.source;
+        payload.scriptName = innerParsed.scriptName || payload.scriptName;
+        payload.scriptType = innerParsed.scriptType || payload.scriptType;
+        payload.parentPath = innerParsed.parentPath || payload.parentPath;
+      }
+    } catch (e) {
+      // source is already raw Luau, keep as-is
+    }
+    payload.source = finalSource;
+
     // Validate all required fields exist
     const required = ['scriptName', 'scriptType', 'parentPath', 'source', 'description'];
     const missing = required.filter((field) => !payload[field]);
@@ -138,11 +154,19 @@ app.post('/api/generate', async (req, res) => {
     }));
 
     // Push to Studio via WebSocket if connected
+    console.log("studioClients size:", studioClients.size);
+    console.log("Looking for token:", sessionToken);
+    console.log("Found client:", !!studioClients.get(sessionToken));
     const client = studioClients.get(sessionToken);
     let pushedToStudio = false;
     if (client && client.ws.readyState === 1) {
       client.ws.send(JSON.stringify(scriptData));
       pushedToStudio = true;
+      console.log("Pushed via WebSocket");
+    } else if (client && client.httpPolling) {
+      console.log("Client is HTTP-polling, script queued");
+    } else {
+      console.log("No connected client found for this token");
     }
 
     // Also queue for HTTP polling (Studio plugin fallback)
@@ -173,11 +197,13 @@ app.get('/api/session/:token/scripts', (req, res) => {
 // Register a Studio plugin connection via HTTP (marks session as connected)
 app.post('/api/session/:token/register', (req, res) => {
   const { token } = req.params;
+  console.log("Plugin registered via HTTP with token:", token);
   if (!sessions.has(token)) {
     sessions.set(token, { createdAt: Date.now() });
   }
   // Mark as HTTP-polling client
   studioClients.set(token, { ws: { readyState: 0 }, connectedAt: Date.now(), httpPolling: true });
+  console.log("All registered tokens:", [...studioClients.keys()]);
   res.json({ registered: true });
 });
 

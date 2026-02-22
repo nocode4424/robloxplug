@@ -303,10 +303,15 @@ local function connect()
 	local serverUrl = urlInput.Text
 	local sessionToken = tokenInput.Text
 
+	-- Trim whitespace from token
+	sessionToken = sessionToken:gsub("^%s*(.-)%s*$", "%1")
+
 	if sessionToken == "" then
 		addLog("Please enter a session token", Color3.fromRGB(255, 200, 80))
 		return
 	end
+
+	print("[RobloxPlug] Token (trimmed): '" .. sessionToken .. "'")
 
 	-- Ensure URL is HTTP (strip trailing slash)
 	local httpUrl = serverUrl:gsub("/$", "")
