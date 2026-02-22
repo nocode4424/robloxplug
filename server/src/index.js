@@ -19,7 +19,43 @@ const scriptQueues = new Map();
 // --- Claude Client ---
 const anthropic = new Anthropic();
 
-const SYSTEM_PROMPT = `You are an expert Roblox Luau developer. When given a request, generate a single Roblox script that implements the feature. Always respond with valid JSON only — no markdown, no explanation outside the JSON. Format: { "scriptName": string, "scriptType": "Script" | "LocalScript" | "ModuleScript", "parentPath": string (e.g. "ServerScriptService", "ReplicatedStorage", "StarterPlayerScripts"), "source": string (the full Luau code), "description": string (one sentence summary) }. Follow Roblox best practices: use RemoteEvents for client-server communication, never use wait() (use task.wait()), use typed Luau where practical. IMPORTANT: Your entire response must be valid JSON only. Do not include any text before or after the JSON object. Do not use markdown code blocks. Start your response with { and end with }.`;
+const SYSTEM_PROMPT = `You are a Roblox Luau expert. Respond ONLY with a raw JSON object. No markdown. No code blocks. No explanation. The JSON must have exactly these fields:
+{
+  "scriptName": "string",
+  "scriptType": "Script" | "LocalScript" | "ModuleScript",
+  "parentPath": "string",
+  "source": "string containing the full Luau code",
+  "description": "string"
+}
+The source field must contain the complete Luau script as a single escaped string. Begin your response with { and end with }. Nothing else.`;
+
+// Robust parser that handles raw code fallback
+async function parseClaudeResponse(text) {
+  // Try direct JSON parse first
+  try {
+    return JSON.parse(text);
+  } catch (e) {}
+
+  // Strip markdown code blocks
+  const stripped = text
+    .replace(/^```json\s*/m, '')
+    .replace(/^```\s*/m, '')
+    .replace(/```\s*$/m, '')
+    .trim();
+
+  try {
+    return JSON.parse(stripped);
+  } catch (e) {}
+
+  // Claude returned raw code instead of JSON — wrap it automatically
+  return {
+    scriptName: "GeneratedScript",
+    scriptType: "Script",
+    parentPath: "ServerScriptService",
+    source: text,
+    description: "Auto-wrapped script from Claude response",
+  };
+}
 
 // --- Express App ---
 const app = express();
@@ -68,22 +104,10 @@ app.post('/api/generate', async (req, res) => {
       messages: [{ role: 'user', content: userMessage }],
     });
 
-    const raw = response.content[0].text;
+    const rawText = response.content[0].text;
+    console.log("RAW CLAUDE RESPONSE:", rawText.substring(0, 500));
 
-    // Strip markdown code blocks if Claude wrapped the response
-    const cleaned = raw.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
-
-    let payload;
-    try {
-      payload = JSON.parse(cleaned);
-    } catch (parseErr) {
-      console.error('JSON parse failed. Raw response:', raw);
-      return res.status(500).json({
-        error: 'Failed to parse Claude response as JSON',
-        parseError: parseErr.message,
-        raw,
-      });
-    }
+    const payload = await parseClaudeResponse(rawText);
 
     // Validate all required fields exist
     const required = ['scriptName', 'scriptType', 'parentPath', 'source', 'description'];

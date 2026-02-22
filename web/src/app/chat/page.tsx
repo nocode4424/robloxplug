@@ -21,6 +21,7 @@ export default function ChatPage() {
   const [scripts, setScripts] = useState<ScriptPayload[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
+  const [loadingStatus, setLoadingStatus] = useState("");
   const [token, setToken] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -41,9 +42,20 @@ export default function ChatPage() {
     setInput("");
     setMessages((prev) => [...prev, { role: "user", content: prompt }]);
     setLoading(true);
+    setLoadingStatus("Sending to Claude AI...");
 
     try {
+      // Animate the status through stages
+      const statusTimer = setTimeout(() => setLoadingStatus("Claude is writing Luau code..."), 2000);
+      const statusTimer2 = setTimeout(() => setLoadingStatus("Parsing and packaging script..."), 6000);
+      const statusTimer3 = setTimeout(() => setLoadingStatus("Almost done..."), 12000);
+
       const script = await generateScript(prompt, token);
+
+      clearTimeout(statusTimer);
+      clearTimeout(statusTimer2);
+      clearTimeout(statusTimer3);
+
       setMessages((prev) => [
         ...prev,
         {
@@ -63,6 +75,7 @@ export default function ChatPage() {
       ]);
     } finally {
       setLoading(false);
+      setLoadingStatus("");
     }
   }
 
@@ -165,10 +178,18 @@ export default function ChatPage() {
             ))}
             {loading && (
               <div className="flex justify-start">
-                <div className="bg-muted rounded-lg p-3">
-                  <p className="text-sm text-muted-foreground animate-pulse">
-                    Generating script...
-                  </p>
+                <div className="bg-muted rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2 h-2 bg-green-500 rounded-full animate-ping" />
+                    <p className="text-sm font-medium text-foreground">
+                      {loadingStatus || "Generating script..."}
+                    </p>
+                  </div>
+                  <div className="flex gap-1">
+                    <div className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
+                    <div className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
+                    <div className="w-1.5 h-1.5 bg-muted-foreground rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                  </div>
                 </div>
               </div>
             )}
