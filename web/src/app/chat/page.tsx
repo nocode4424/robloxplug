@@ -16,6 +16,16 @@ interface Message {
   script?: ScriptPayload;
 }
 
+function loadFromStorage<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") return fallback;
+  try {
+    const stored = localStorage.getItem(key);
+    return stored ? JSON.parse(stored) : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export default function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [scripts, setScripts] = useState<ScriptPayload[]>([]);
@@ -23,12 +33,28 @@ export default function ChatPage() {
   const [loading, setLoading] = useState(false);
   const [loadingStatus, setLoadingStatus] = useState("");
   const [token, setToken] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  // Load persisted state on mount
   useEffect(() => {
     const stored = localStorage.getItem("sessionToken");
     setToken(stored);
+    setMessages(loadFromStorage<Message[]>("rp_messages", []));
+    setScripts(loadFromStorage<ScriptPayload[]>("rp_scripts", []));
+    setHydrated(true);
   }, []);
+
+  // Persist messages and scripts whenever they change
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem("rp_messages", JSON.stringify(messages));
+  }, [messages, hydrated]);
+
+  useEffect(() => {
+    if (!hydrated) return;
+    localStorage.setItem("rp_scripts", JSON.stringify(scripts));
+  }, [scripts, hydrated]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -100,10 +126,21 @@ export default function ChatPage() {
           <h2 className="font-semibold text-lg">RobloxPlug</h2>
           <ConnectionStatus token={token} />
         </div>
-        <div className="p-3 border-b">
+        <div className="p-3 border-b flex items-center justify-between">
           <p className="text-xs text-muted-foreground font-medium uppercase tracking-wider">
             Generated Scripts
           </p>
+          {scripts.length > 0 && (
+            <button
+              onClick={() => {
+                setMessages([]);
+                setScripts([]);
+              }}
+              className="text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+            >
+              Clear
+            </button>
+          )}
         </div>
         <ScrollArea className="flex-1">
           <div className="p-2 space-y-1">

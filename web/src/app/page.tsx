@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -11,8 +11,16 @@ export default function Home() {
   const [token, setToken] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [loading, setLoading] = useState(false);
-
   const [error, setError] = useState<string | null>(null);
+  const [hasHistory, setHasHistory] = useState(false);
+
+  // Restore existing session on mount
+  useEffect(() => {
+    const stored = localStorage.getItem("sessionToken");
+    if (stored) setToken(stored);
+    const msgs = localStorage.getItem("rp_messages");
+    if (msgs && JSON.parse(msgs).length > 0) setHasHistory(true);
+  }, []);
 
   async function handleConnect() {
     setLoading(true);
@@ -27,6 +35,14 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
+  }
+
+  function handleNewSession() {
+    localStorage.removeItem("sessionToken");
+    localStorage.removeItem("rp_messages");
+    localStorage.removeItem("rp_scripts");
+    setToken(null);
+    setHasHistory(false);
   }
 
   function handleCopy() {
@@ -82,8 +98,18 @@ export default function Home() {
                 </div>
               </div>
               <Button onClick={handleStartChat} className="w-full" size="lg">
-                Open Chat
+                {hasHistory ? "Continue Session" : "Open Chat"}
               </Button>
+              {hasHistory && (
+                <Button
+                  onClick={handleNewSession}
+                  variant="outline"
+                  className="w-full"
+                  size="sm"
+                >
+                  Start New Session
+                </Button>
+              )}
             </>
           )}
         </CardContent>
