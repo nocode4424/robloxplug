@@ -1,20 +1,9 @@
 import type { Metadata } from "next";
-import localFont from "next/font/local";
 import "./globals.css";
-
-const geistSans = localFont({
-  src: "./fonts/GeistVF.woff",
-  variable: "--font-geist-sans",
-  weight: "100 900",
-});
-const geistMono = localFont({
-  src: "./fonts/GeistMonoVF.woff",
-  variable: "--font-geist-mono",
-  weight: "100 900",
-});
+import { Toaster } from "react-hot-toast";
 
 export const metadata: Metadata = {
-  title: "RobloxPlug — AI Game Creator",
+  title: "StudioAI — AI Roblox Game Creator",
   description: "Generate Roblox scripts with AI and push them directly to Studio",
 };
 
@@ -24,11 +13,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark">
-      <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
-      >
+    <html lang="en">
+      <body>
         {children}
+        <Toaster
+          position="bottom-right"
+          toastOptions={{
+            style: {
+              background: 'var(--bg-card)',
+              color: 'var(--text-primary)',
+              border: '1px solid var(--border)',
+              fontSize: '13px',
+            },
+          }}
+        />
       </body>
     </html>
   );
