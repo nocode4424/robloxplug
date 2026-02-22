@@ -216,70 +216,66 @@ local function addLog(text: string, color: Color3?)
 	entry.Parent = logScroll
 end
 
--- Resolve a parentPath string (e.g. "ServerScriptService") to a game instance
-local function resolveParent(parentPath: string): Instance?
-	local parts = string.split(parentPath, ".")
-	local current: Instance = game
-
-	for _, part in parts do
-		local child = current:FindFirstChild(part)
-		if not child then
-			-- Try common service names
-			local success, service = pcall(function()
-				return game:GetService(part)
-			end)
-			if success and service then
-				current = service
-			else
-				return nil
-			end
-		else
-			current = child
-		end
-	end
-
-	return current
+-- Resolve parentPath to the correct service/container
+local function getServiceByPath(path)
+	local services = {
+		ServerScriptService = game:GetService("ServerScriptService"),
+		ReplicatedStorage = game:GetService("ReplicatedStorage"),
+		StarterPlayerScripts = game:GetService("StarterPlayer"):FindFirstChild("StarterPlayerScripts"),
+		StarterCharacterScripts = game:GetService("StarterPlayer"):FindFirstChild("StarterCharacterScripts"),
+		StarterGui = game:GetService("StarterGui"),
+		Workspace = game:GetService("Workspace"),
+		ServerStorage = game:GetService("ServerStorage"),
+		ReplicatedFirst = game:GetService("ReplicatedFirst"),
+	}
+	return services[path]
 end
 
 -- Create a script instance from the payload
 local function createScript(payload)
-	local scriptName = payload.scriptName
-	local scriptType = payload.scriptType
-	local parentPath = payload.parentPath
-	local source = payload.source
+	-- Debug: log what we received
+	print("[RobloxPlug] Payload received - Name:", tostring(payload.scriptName),
+		"Type:", tostring(payload.scriptType),
+		"Path:", tostring(payload.parentPath))
 
-	local parent = resolveParent(parentPath)
+	local parent = getServiceByPath(payload.parentPath)
 	if not parent then
-		local msg = "Could not resolve parent path: " .. parentPath
-		warn("[RobloxPlug] " .. msg)
-		addLog("ERROR: " .. msg, Color3.fromRGB(255, 80, 80))
-		return
+		warn("[RobloxPlug] Unknown parentPath: " .. tostring(payload.parentPath) .. ", defaulting to ServerScriptService")
+		parent = game:GetService("ServerScriptService")
 	end
 
-	local scriptInstance: Instance
-	if scriptType == "LocalScript" then
-		scriptInstance = Instance.new("LocalScript")
-	elseif scriptType == "ModuleScript" then
-		scriptInstance = Instance.new("ModuleScript")
+	-- Remove existing script with same name if present
+	local existing = parent:FindFirstChild(payload.scriptName)
+	if existing then
+		existing:Destroy()
+	end
+
+	-- Create correct script type
+	local newScript
+	if payload.scriptType == "LocalScript" then
+		newScript = Instance.new("LocalScript")
+	elseif payload.scriptType == "ModuleScript" then
+		newScript = Instance.new("ModuleScript")
 	else
-		scriptInstance = Instance.new("Script")
+		newScript = Instance.new("Script")
 	end
 
-	scriptInstance.Name = scriptName
-	scriptInstance.Source = source
-	scriptInstance.Parent = parent
+	newScript.Name = payload.scriptName
+	newScript.Source = payload.source
+	newScript.Parent = parent
 
 	local msg = string.format(
 		"Created %s '%s' in %s",
-		scriptType,
-		scriptName,
-		parent:GetFullName()
+		tostring(payload.scriptType),
+		tostring(payload.scriptName),
+		tostring(payload.parentPath)
 	)
 	print("[RobloxPlug] " .. msg)
 	addLog(msg, Color3.fromRGB(100, 255, 100))
 
 	-- Select the new script for the user
-	Selection:Set({ scriptInstance })
+	Selection:Set({ newScript })
+	return newScript
 end
 
 -- WebSocket connection handling
@@ -350,36 +346,45 @@ local function connect()
 		return
 	end
 
-	-- Start polling for scripts
-	-- In a production setup, the server would have a /api/session/:token/poll
-	-- endpoint that returns pending scripts. For now, the WebSocket push
-	-- happens server-side; this plugin demonstrates the script creation logic.
-	-- To fully integrate, add a polling endpoint to the server.
+	-- Poll for scripts from the server queue
 	task.spawn(function()
 		while pollConnection and connected do
 			task.wait(2)
-			-- Poll for pending scripts
 			local pollSuccess, pollErr = pcall(function()
 				local resp = HttpService:RequestAsync({
 					Url = httpUrl .. "/api/session/" .. sessionToken .. "/scripts",
 					Method = "GET",
 					Headers = { ["Content-Type"] = "application/json" },
 				})
-				if resp.Success and resp.Body ~= "[]" and resp.Body ~= "" then
-					local ok, scripts = pcall(function()
+				if resp.Success and resp.Body and resp.Body ~= "[]" and resp.Body ~= "" then
+					local ok, data = pcall(function()
 						return HttpService:JSONDecode(resp.Body)
 					end)
-					if ok and type(scripts) == "table" then
-						for _, payload in scripts do
-							if payload.scriptName and payload.source then
-								createScript(payload)
+					if not ok then
+						warn("[RobloxPlug] Failed to decode poll response: " .. tostring(resp.Body:sub(1, 200)))
+						return
+					end
+
+					-- Debug: log raw decoded data
+					print("[RobloxPlug] Poll received " .. tostring(#data) .. " script(s)")
+
+					if type(data) == "table" then
+						for _, scriptPayload in ipairs(data) do
+							-- Debug: log each payload
+							print("[RobloxPlug] Script payload:", HttpService:JSONEncode(scriptPayload):sub(1, 300))
+
+							if scriptPayload.scriptName and scriptPayload.source then
+								createScript(scriptPayload)
+							else
+								warn("[RobloxPlug] Skipping payload missing scriptName or source")
 							end
+							task.wait(0.1)
 						end
 					end
 				end
 			end)
 			if not pollSuccess then
-				-- Silently ignore poll errors (endpoint may not exist yet)
+				warn("[RobloxPlug] Poll error: " .. tostring(pollErr))
 			end
 		end
 	end)

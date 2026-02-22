@@ -121,14 +121,27 @@ app.post('/api/generate', async (req, res) => {
       });
     }
 
+    // Build a clean script object with only the fields we need
+    const scriptData = {
+      scriptName: payload.scriptName,
+      scriptType: payload.scriptType,
+      parentPath: payload.parentPath,
+      source: payload.source,
+      description: payload.description,
+    };
+
+    console.log("SENDING TO STUDIO:", JSON.stringify({
+      scriptName: scriptData.scriptName,
+      scriptType: scriptData.scriptType,
+      parentPath: scriptData.parentPath,
+      sourceLength: scriptData.source.length,
+    }));
+
     // Push to Studio via WebSocket if connected
     const client = studioClients.get(sessionToken);
     let pushedToStudio = false;
     if (client && client.ws.readyState === 1) {
-      client.ws.send(JSON.stringify({
-        type: 'createScript',
-        ...payload,
-      }));
+      client.ws.send(JSON.stringify(scriptData));
       pushedToStudio = true;
     }
 
@@ -136,7 +149,7 @@ app.post('/api/generate', async (req, res) => {
     if (!scriptQueues.has(sessionToken)) {
       scriptQueues.set(sessionToken, []);
     }
-    scriptQueues.get(sessionToken).push(payload);
+    scriptQueues.get(sessionToken).push(scriptData);
 
     res.json({ ...payload, pushedToStudio });
   } catch (err) {
