@@ -29,31 +29,33 @@ const SYSTEM_PROMPT = `You are a Roblox Luau expert. Respond ONLY with a raw JSO
 }
 The source field must contain the complete Luau script as a single escaped string. Begin your response with { and end with }. Nothing else.`;
 
-// Robust parser that handles raw code fallback
 async function parseClaudeResponse(text) {
-  // Try direct JSON parse first
-  try {
-    return JSON.parse(text);
-  } catch (e) {}
-
-  // Strip markdown code blocks
-  const stripped = text
+  const cleaned = text
     .replace(/^```json\s*/m, '')
     .replace(/^```\s*/m, '')
     .replace(/```\s*$/m, '')
     .trim();
 
-  try {
-    return JSON.parse(stripped);
-  } catch (e) {}
+  // Find the outermost JSON object
+  const start = cleaned.indexOf('{');
+  const end = cleaned.lastIndexOf('}');
 
-  // Claude returned raw code instead of JSON — wrap it automatically
+  if (start !== -1 && end !== -1 && end > start) {
+    try {
+      return JSON.parse(cleaned.slice(start, end + 1));
+    } catch (e) {
+      console.error("JSON parse error:", e.message);
+      console.error("Attempted to parse:", cleaned.slice(start, end + 1).substring(0, 200));
+    }
+  }
+
+  // True fallback only if no JSON found
   return {
     scriptName: "GeneratedScript",
     scriptType: "Script",
     parentPath: "ServerScriptService",
     source: text,
-    description: "Auto-wrapped script from Claude response",
+    description: "Auto-wrapped script",
   };
 }
 
